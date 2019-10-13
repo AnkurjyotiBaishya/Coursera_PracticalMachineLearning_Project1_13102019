@@ -1,0 +1,173 @@
+---
+title: "Practical Machine Learning - Project 1 (13/10/2019)"
+output: html_document
+---
+#Summary
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health or to find patterns in their behavior. In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+  More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+
+  The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+  The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+The primary question we wish to answer is:
+
+* **How well do the participants of the test perform in their activities?**
+
+
+For the analysis, we followed the following procedure:
+
+1. Reading and collecting the data
+2. Preprocessing the data to remove unnecessary columns and exclude variables with large missing values
+3. Exploratory Analysis to understand basic relations
+4. PCA to reduce the number of predictors to a manageable figure
+5. Applying a Random Forest model and cross-validating the results
+6. Predicting the test performance using the developed model
+
+#Data Preprocessing
+We load the data from the given sources using the read.csv() command and also collect the required packages.
+
+```{r reading data, message=FALSE, warning=FALSE}
+fitness.train <- read.csv(paste(getwd(),"/Raw Data/pml-training.csv", sep = ""), header = TRUE)
+fitness.test <- read.csv(paste(getwd(),"/Raw Data/pml-testing.csv", sep = ""), header = TRUE)
+
+#PACKAGES
+library(caret)
+library(ggplot2)
+library(randomForest)
+library(rpart)
+```
+
+Then, we clean the data.
+
+* We exclude identifier, timestamp and window data from the data, since they cannot be used as predictors
+* We exclude variables with over 95% missing values
+
+```{r preprocessing, results="hide"}
+str(fitness.train)
+class(fitness.train$classe)
+levels(fitness.train$classe)
+
+#exclude identifier, timestamp, and window data (they cannot be used for prediction)
+del1 <- grep("name|timestamp|window|X", colnames(fitness.train), value=F) 
+fitness.train2 <- fitness.train[,-del1]
+
+#exclude variables with over 95% missing data (NA)
+fitness.train2[fitness.train2 == ""] <- NA
+NArate <- apply(fitness.train2, 2, function(x) sum(is.na(x)))/nrow(fitness.train2)
+fitness.train3 <- fitness.train2[!(NArate > 0.95)]
+```
+
+```{r preprocessing 2}
+str(fitness.train3)
+```
+
+#Exploratory Analysis
+We perform some basic exploratory analysis to visualise the data better. The results of the plot are provided in the Appendix.
+
+```{r exploration, fig.keep='none'}
+plot(fitness.train3$classe)
+```
+
+#Data Analysis
+##Data Split
+First, we divide the data into validation and training sets for a data split cross-validation procedure.
+
+```{r data split}
+set.seed(1334)
+part <- createDataPartition(fitness.train3$classe, p = 0.7, list = FALSE)
+training <- fitness.train3[part,]
+validation <- fitness.train3[-part,]
+
+dim(training)
+```
+
+The number of variables is still too high for an accurate model. So we perform Principal Component Analysis.
+
+##PCA
+We create new variables using PCA to develop a intuitive and faster model.
+
+```{r PCA1}
+PCA.1 <- preProcess(training[,1:52], method = "pca", thresh = 0.95)
+PCA.1
+```
+
+```{r PCA2}
+#25 components were used
+PCA.2 <- preProcess(training[,1:52], method = "pca", pcaComp = 25)
+training.PCA <- predict(PCA.2, training[,1:52])
+
+dim(training.PCA)
+```
+
+##Modelling
+Finally, we use the training dataset to build a Random Forests model.
+
+```{r modelling}
+model1 <- randomForest(training$classe ~ ., data = training.PCA, do.trace = FALSE)
+model1
+```
+
+We perform cross validation on our model.
+
+##Cross Validation
+
+```{r cross validation}
+valid.PCA <- predict(PCA.2, validation[,-53])
+valid.1 <- predict(model1, valid.PCA)
+confusionMatrix(validation$classe, valid.1)
+```
+
+With an expected accuracy of over 97%, we can reasonably accept our model as a good fit. We can then proceed to predictions using our testing data.
+
+##Predicting
+We set up our test data, and perform our predictions using the RF model.
+
+```{r predictions}
+#deleting extra variables
+del1 <- grep("name|timestamp|window|X", colnames(fitness.test), value=FALSE) 
+fitness.test2 <- fitness.test[,-del1]
+
+#removing variables with large missing values
+fitness.test2[fitness.test2 == ""] <- NA
+NArate <- apply(fitness.test2, 2, function(x) sum(is.na(x)))/nrow(fitness.test2)
+fitness.test3 <- fitness.test2[!(NArate > 0.95)]
+
+#PCA preprocessing
+testing.PCA <- predict(PCA.2, fitness.test3[,1:52])
+
+#predicting
+fitness.test3$Classe <- predict(model1, testing.PCA)
+fitness.test3$Classe
+```
+
+And thus, we get our predictions for the test data.
+
+#Result
+* In this analysis, **19622 observations** from weightlifting exercise were used to analyze and predict correct body movement from others during the exercise. 
+* **70%** of the total observations (13737 observations) was used to build a model by **Random Forests method**, and the rest of **30%** of the observations (5885 observations) was used for model validation by Data Split.
+* The model statistics showed that the built model had the **overall accuracy of 97%** for the testing set, which is not overlapping with observations used to built the model. The sensitivity was in between *92%-99%* and the specificity was over *99%* for all classes (class A-E, total 5 classes). 
+* Overall, the model is well developed to predict the exercise classes during weight lifting. 
+
+As for the limitations in this study, the observation data used in the analyses was collected from 6 young health participants in an experiment using Microsoft Kinect. Therefore, under those condition, the model is expected to perform over 95% accuracy; however, with different conditions, such as experiments with elderly people and/or using different device, the model might not perform as well as shown in the analysis.
+
+---
+
+#Appendix
+
+```{r plot, echo=FALSE}
+plot(fitness.train3$classe, main = "Frequency of Each Class \n(activites in the test)", col = "Red", xlab = "Classes", ylab = "Count")
+```
+
+###References
+
+* Read more at: http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises#ixzz3jOpnStGb
+* https://rpubs.com/catfish/102173
+
+This is the end of our analysis
+
+---
